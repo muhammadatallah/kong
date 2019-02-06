@@ -21,6 +21,7 @@ local concurrency = require "kong.concurrency"
 
 
 local kong        = kong
+local ipairs      = ipairs
 local tostring    = tostring
 local tonumber    = tonumber
 local sub         = string.sub
@@ -58,15 +59,37 @@ end
 
 do
   -- Given a protocol, return the subsystem that handles it
-  local protocol_subsystem = {
-    http = "http",
-    https = "http",
-    tcp = "stream",
-    tls = "stream",
-  }
-
   local router
   local router_version
+
+  local function should_process_route(route)
+    local process_route
+    for _, protocol in ipairs(route.protocols) do
+      if constants.PROTOCOLS_WITH_SUBSYSTEM[protocol] == subsystem then
+        return true
+      end
+    end
+  end
+
+  local function get_service_for_route(db, route)
+    local service_pk = route.service
+    if not service_pk then
+      return nil, nil, subsystem
+    end
+
+    local service, err = db.services:select(service_pk)
+    if not service then
+      return nil, "could not find service for route (" .. route.id .. "): " ..
+                  err
+    end
+
+    -- TODO: this should not be needed as the schema should check it already
+    local service_subsystem = constants.PROTOCOLS_WITH_SUBSYSTEM[service.protocol]
+    if service_subsystem == subsystem then
+      return service, nil, service_subsystem
+    end
+
+  end
 
   build_router = function(db, version)
     local routes, i = {}, 0
@@ -76,26 +99,18 @@ do
         return nil, "could not load routes: " .. err
       end
 
-      local service_pk = route.service
+      if should_process_route(route) then
+        local service, err, service_subsystem = get_service_for_route(db, route)
+        if err then
+          return nil, err
+        end
 
-      if not service_pk then
-        return nil, "route (" .. route.id .. ") is not associated with service"
-      end
-
-      local service, err = db.services:select(service_pk)
-      if not service then
-        return nil, "could not find service for route (" .. route.id .. "): " ..
-                    err
-      end
-
-      local stype = protocol_subsystem[service.protocol]
-      if subsystem == stype then
         local r = {
           route   = route,
           service = service,
         }
 
-        if stype == "http" and route.hosts then
+        if service_subsystem == "http" and route.hosts then
           -- TODO: headers should probably be moved to route
           r.headers = {
             host = route.hosts,
