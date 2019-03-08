@@ -233,6 +233,13 @@ local function get_db_utils(strategy, tables, plugins)
     end
   end
 
+  _G.kong.db = db
+  _G.kong.worker_events = assert(kong_global.init_worker_events())
+  _G.kong.cluster_events = assert(kong_global.init_cluster_events(conf, db))
+  _G.kong.cache = assert(kong_global.init_cache(conf,
+                                                _G.kong.cluster_events,
+                                                _G.kong.worker_events
+                                               ))
   return bp, db
 end
 
